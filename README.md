@@ -18,14 +18,22 @@ Uninstall Nginx
 systemctl stop nginx && apt purge -y nginx && rm -r /etc/systemd/system/nginx.service.d/
 ```
 
-project 	
+project
+
 program 	/usr/local/bin/xray
+
 Configuration 	/usr/local/etc/xray/config.json
+
 geoip 	/usr/local/share/xray/geoip.dat
+
 geosite 	/usr/local/share/xray/geosite.dat
+
 Restart 	systemctl restart xray
+
 state 	systemctl status xray
+
 View logs 	journalctl -u xray -o cat -e
+
 Real-time logs 	journalctl -u xray -o cat -f
 
 
