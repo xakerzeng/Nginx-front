@@ -406,3 +406,226 @@ http {
     }
 }`
 
+📡 STREAM блок (TCP/TLS проксирование)
+Это ключевая часть для работы REALITY - здесь происходит маршрутизация на основе SNI (Server Name Indication):
+SNI маппинг
+```
+map $ssl_preread_server_name $name {
+    example.com                 backend1;
+    chika.example.com           backend2;
+    default                     default_backend;
+}
+```
+Что делает:
+
+Читает SNI из TLS handshake (НЕ расшифровывая трафик!)
+Если клиент запрашивает example.com → направляет на backend1
+Если chika.example.com → на backend2
+Всё остальное → на default_backend
+
+Upstream бэкенды
+```
+upstream backend1 {
+    server 127.0.0.1:8001;  # → Xray inbound #1
+}
+
+upstream backend2 {
+    server 127.0.0.1:8003;  # → Xray inbound #2
+}
+
+upstream default_backend {
+    server 127.0.0.1:8011;  # → Nginx заглушка (отклоняет соединение)
+}
+```
+TCP прокси сервер
+```
+server {
+    listen 443;                 # Слушает на порту 443 (внешний HTTPS)
+    listen [::]:443;            # IPv6
+    proxy_pass $name;           # Передаёт на выбранный бэкенд
+    ssl_preread on;             # Читает SNI БЕЗ расшифровки
+    proxy_protocol on;          # Отправляет PROXY protocol header
+}
+```
+Как это работает:
+
+Клиент подключается на порт 443
+Nginx читает SNI из TLS ClientHello
+В зависимости от домена направляет на:
+
+8001 (Xray для example.com)
+8003 (Xray для chika.example.com)
+8011 (заглушка для неизвестных доменов)
+
+
+Передаёт PROXY protocol, чтобы Xray знал реальный IP клиента
+
+
+🌐 HTTP блок
+Логирование
+```
+nginxlog_format main '[$time_local] $proxy_protocol_addr "$http_referer" "$http_user_agent"';
+```
+
+Логирует реальный IP клиента из PROXY protocol
+
+HTTP → HTTPS редирект
+```
+server {
+    listen 80;
+    listen [::]:80;
+    return 301 https://$host$request_uri;
+}
+```
+
+Все HTTP запросы перенаправляются на HTTPS
+
+
+Заглушка (порт 8011)
+```
+server {
+    listen 127.0.0.1:8011 ssl proxy_protocol;
+    ssl_reject_handshake on;
+    ssl_protocols TLSv1.2 TLSv1.3;
+}
+```
+Назначение:
+
+Принимает соединения с неизвестными SNI
+Сразу отклоняет TLS handshake
+Защита от сканирования сервера
+
+
+Маскирующий сайт #1 (порт 8002)
+```
+server {
+    listen 127.0.0.1:8002 ssl proxy_protocol;
+    http2 on;
+```
+SSL настройки:
+```
+nginxssl_certificate            /etc/ssl/private/example.com.cer;
+ssl_certificate_key        /etc/ssl/private/example.com.key;
+ssl_protocols              TLSv1.2 TLSv1.3;
+ssl_stapling               on;  # OCSP stapling для безопасности
+```
+Получение реального IP:
+```
+nginxset_real_ip_from           127.0.0.1;
+real_ip_header             proxy_protocol;
+```
+
+Извлекает реальный IP клиента из PROXY protocol
+
+Проксирование контента:
+```
+location / {
+    set $website www.lovelive-anime.jp;
+    proxy_pass https://$website;
+    
+    sub_filter $proxy_host $host;  # Подмена доменов в HTML
+    sub_filter_once off;
+    
+    proxy_set_header Host $proxy_host;
+    proxy_ssl_server_name on;
+}
+```
+
+**Что происходит:**
+1. Если Xray НЕ распознал клиента как VPN (нет правильного UUID)
+2. Соединение перенаправляется сюда (на порт 8002)
+3. Nginx **проксирует реальный сайт** www.lovelive-anime.jp
+4. Внешний наблюдатель видит легитимный HTTPS трафик к аниме-сайту!
+5. Подменяет домены в ответах (`www.lovelive-anime.jp` → `example.com`)
+
+---
+
+### **Маскирующий сайт #2 (порт 8004)**
+
+Полностью идентичен 8002, но для домена `chika.example.com`:
+- Свой SSL сертификат
+- Также проксирует www.lovelive-anime.jp
+
+---
+
+## 🔄 **Как работает вся схема вместе:**
+
+### **Сценарий 1: VPN клиент (с правильным UUID)**
+```
+1. Клиент → Nginx:443 (SNI: example.com)
+2. Nginx читает SNI → направляет на 127.0.0.1:8001
+3. Xray проверяет UUID → ОК!
+4. Xray расшифровывает REALITY → туннелирует трафик
+5. Клиент получает доступ в интернет через VPN
+```
+
+### **Сценарий 2: Обычный браузер / сканер**
+```
+1. Браузер → Nginx:443 (SNI: example.com)
+2. Nginx читает SNI → направляет на 127.0.0.1:8001
+3. Xray проверяет → UUID отсутствует или неверный
+4. Xray перенаправляет соединение на 127.0.0.1:8002 (dest)
+5. Nginx:8002 проксирует реальный сайт www.lovelive-anime.jp
+6. Браузер видит обычный аниме-сайт!
+```
+
+### **Сценарий 3: Случайный SNI**
+```
+1. Клиент → Nginx:443 (SNI: randomdomain.com)
+2. Nginx → default_backend (127.0.0.1:8011)
+3. Nginx:8011 отклоняет TLS handshake
+4. Соединение закрывается
+
+🎯 Ключевые особенности:
+PROXY Protocol
+
+Nginx передаёт реальный IP клиента в Xray
+Xray передаёт его дальше в маскирующий Nginx
+Логи показывают настоящие IP адреса
+
+ssl_preread
+
+Nginx читает SNI не расшифровывая TLS
+Xray самостоятельно выполняет REALITY handshake
+Маскировка остаётся незаметной
+
+Двойная защита:
+
+SNI фильтрация - только известные домены попадают в Xray
+UUID проверка - Xray дополнительно проверяет клиента
+Fallback сайт - неудачные попытки видят реальный сайт
+
+
+⚙️ Что нужно для работы:
+
+DNS записи:
+
+example.com → IP сервера
+chika.example.com → IP сервера
+
+
+SSL сертификаты:
+
+/etc/ssl/private/example.com.cer
+/etc/ssl/private/chika.example.com.cer
+Можно получить через Let's Encrypt
+
+
+Порты:
+
+443 - открыт в фаерволе (внешний)
+80 - открыт для получения сертификатов
+8001, 8002, 8003, 8004, 8011 - только локальные
+
+
+
+
+🛡️ Защита от обнаружения:
+
+Сервер неотличим от обычного HTTPS сайта
+При сканировании показывает легитимный контент
+REALITY шифрование выглядит как обычный TLS
+Даже активное зондирование не выявит VPN
+
+Это очень умная и надёжная схема обхода блокировок! 🚀
+
