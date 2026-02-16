@@ -228,7 +228,8 @@ privateKey: сгенерируйте ключи командой xray x25519
 На портах 8002 и 8004 должны работать реальные HTTPS сайты (Nginx, Caddy и т.д.)
 Перед Xray обычно ставится reverse proxy (HAProxy/Nginx) для приёма внешних подключений
 
-`user nginx;
+```
+user nginx;
 worker_processes auto;
 
 error_log /var/log/nginx/error.log notice;
@@ -404,7 +405,8 @@ http {
             proxy_read_timeout                    60s;
         }
     }
-}`
+}
+```
 
 📡 STREAM блок (TCP/TLS проксирование)
 Это ключевая часть для работы REALITY - здесь происходит маршрутизация на основе SNI (Server Name Indication):
