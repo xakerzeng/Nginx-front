@@ -5,7 +5,11 @@ https://github.com/chika0801/Xray-examples/tree/main/VLESS-Vision-REALITY/nginx_
 Install Xray 
 
 ```
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --beta
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+```
+или
+```
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --version v1.0.0
 ```
 
 Install Nginx
