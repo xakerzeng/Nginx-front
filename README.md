@@ -350,7 +350,7 @@ http {
             sub_filter                            $proxy_host $host;
             sub_filter_once                       off;
 
-            set $website                          www.lovelive-anime.jp;
+            set $website                          demo1.nextcloud.com;
             proxy_pass                            https://$website;
             resolver                              1.1.1.1;
 
@@ -360,6 +360,7 @@ http {
             proxy_cache_bypass                    $http_upgrade;
 
             proxy_ssl_server_name                 on;
+            proxy_redirect                        https://demo1.nextcloud.com/ https://example.com/;
 
             proxy_set_header Upgrade              $http_upgrade;
             proxy_set_header Connection           $connection_upgrade;
@@ -987,6 +988,50 @@ DNS запись:
 example.com → IP вашего сервера
 
 Конфигурация стала проще и понятнее! 🎯
+
+
+**Ты мне сделал конфигурацию nginx которая проксирует чужой сайт. А можешь переделать её, чтобы открывался мой сайт? Файлики находятся тут /var/www/html;**
+Вот изменённый блок server на порту 8002:
+
+```
+server {
+    listen                     127.0.0.1:8002 ssl proxy_protocol;
+    http2                      on;
+
+    set_real_ip_from           127.0.0.1;
+    real_ip_header             proxy_protocol;
+
+    ssl_certificate            /etc/ssl/private/ficht.sh.cer;
+    ssl_certificate_key        /etc/ssl/private/ficht.sh.key;
+
+    ssl_protocols              TLSv1.2 TLSv1.3;
+    ssl_ciphers                TLS13_AES_128_GCM_SHA256:TLS13_AES_256_GCM_SHA384:TLS13_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers  on;
+
+    ssl_session_timeout        1h;
+    ssl_session_cache          shared:SSL:10m;
+
+    ssl_stapling               on;
+    ssl_stapling_verify        on;
+    resolver                   1.1.1.1 valid=60s;
+    resolver_timeout           2s;
+
+    # Корень сайта
+    root /var/www/html;
+    index index.html index.htm;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Опционально: кэширование статики
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
 
 **а что за заглушка 8011?**
 
